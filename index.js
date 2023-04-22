@@ -244,6 +244,11 @@ class RPC extends EventEmitter {
         return new Promise((resolve, reject) => {
             let req = activeOnly ? '<get_results/>' : '<get_results><active_only>0</active_only></get_results>';
             this.rawRequest(req).then((wu) => {
+                if (!wu.boinc_gui_rpc_reply.results.result) {
+                    this.wu = [];
+                    resolve([]);
+                    return;
+                }
                 wu.boinc_gui_rpc_reply.results.result.forEach((t) => {
                     if (t.active_task) {
                         t.active_task.scheduler_state_friendly = stateLookup('scheduler_state', t.active_task.scheduler_state);
@@ -387,7 +392,6 @@ class RPC extends EventEmitter {
                 })
 
                 this.messages = arr;
-                console.log(arr);
                 resolve(this.messages);
             })
         })
