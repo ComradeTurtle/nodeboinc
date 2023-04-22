@@ -203,34 +203,29 @@ class RPC extends EventEmitter {
     }
 
     rawRequest(request) {
-        const headers = [
-            'User-Agent: NodeBOINC v0.1',
-            'Content-Type: text/xml',
-            'Accept: text/xml',
-            'Accept-Charset: UTF8',
-            'Connection: Keep-Alive'
-        ];
-
         const body = '<boinc_gui_rpc_request>' + request + '</boinc_gui_rpc_request>' + '\x03';
-        const contentLength = Buffer.byteLength(body, 'utf8');
-
-        const httpRequest = `POST /RPC2 HTTP/1.1\r\n${headers.join('\r\n')}\r\nContent-Length: ${contentLength}\r\n\r\n${body}`;
-
         return new Promise((resolve, reject) => {
             this.socket.write(body);
 
             let response = '';
             this.socket.on('data', (data) => {
                 response += data.toString();
-                // const xml = response.split('\n\n')[1];
-                const parser1 = new XMLParser();
 
-                if (XMLValidator.validate(response)) {
-                    const parsed1 = parser1.parse(response);
-                    resolve(parsed1);
-                } else {
-                    reject('Invalid XML');
-                    // this.socket.close();
+                // Both requests and replies are terminated with the control character 0x03. 
+                if (response.endsWith('\x03')) {
+                    if (data) {
+                        // response += data.toString();
+                        // const xml = response.split('\n\n')[1];
+                        const parser1 = new XMLParser();
+                        // console.log(response);
+                        if (XMLValidator.validate(response)) {
+                            const parsed1 = parser1.parse(response);
+                            resolve(parsed1);
+                        } else {
+                            reject('Invalid XML');
+                            // this.socket.close();
+                        }
+                    }
                 }
             });
         });
@@ -340,6 +335,60 @@ class RPC extends EventEmitter {
             this.rawRequest('<get_disk_usage/>').then((disk) => {
                 this.diskUsage = disk.boinc_gui_rpc_reply.disk_usage_summary;
                 resolve(this.diskUsage);
+            })
+        })
+    }
+
+    getServerVersion() {
+        return new Promise((resolve, reject) => {
+            this.rawRequest('<exchange_versions/>').then((version) => {
+                this.serverVersion = {
+                    major: parseInt(version.boinc_gui_rpc_reply.server_version.major),
+                    minor: parseInt(version.boinc_gui_rpc_reply.server_version.minor),
+                    release: parseInt(version.boinc_gui_rpc_reply.server_version.release),
+                    string: `${version.boinc_gui_rpc_reply.server_version.major}.${version.boinc_gui_rpc_reply.server_version.minor}.${version.boinc_gui_rpc_reply.server_version.release}`
+                }
+                resolve(this.serverVersion);
+            })
+        })
+    }
+
+    getMessageCount() {
+        return new Promise((resolve, reject) => {
+            this.rawRequest('<get_message_count/>').then((count) => {
+                this.messageCount = parseInt(count.boinc_gui_rpc_reply.seqno);
+                resolve(this.messageCount);
+            })
+        })
+    }
+
+    getMessages(seqno, translatable = false) {
+        return new Promise((resolve, reject) => {
+            let arr = [];
+
+            let request = '<get_messages>';
+            if (seqno) {
+                request += `<seqno>${parseInt(seqno)}</seqno>`;
+            }
+            if (translatable) {
+                request += '<translatable/>';
+            }
+
+            request += '</get_messages>';
+            this.rawRequest(request).then((messages) => {
+                messages.boinc_gui_rpc_reply.msgs.msg.forEach((e) => {
+                    arr.push({
+                        seqno: parseInt(e.seqno),
+                        project: e.project,
+                        priority: parseInt(e.pri),
+                        body: e.body.replaceAll('\n', ''),
+                        timestamp: parseInt(e.time)
+                    })
+                })
+
+                this.messages = arr;
+                console.log(arr);
+                resolve(this.messages);
             })
         })
     }
