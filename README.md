@@ -109,3 +109,15 @@ connection.on('ready', () => {
     - project_name (string): Only used for attaching. Manually sets the name of the project to be attached.
 
 - `getProxySettings()`: Returns the current proxy settings
+
+
+- `getAccountManager()`: Returns information regarding the currently configured account manager.
+
+
+- `setAccountManager()`: Various account manager operations.
+  - action (one of "attach", "detach", "update")
+	- **NOTE:** Currently, attaching an account manager using a file is not implemented.
+  - options (object): Only used for attaching **and updating**.
+	- url (string): The URL of the account manager to perform the action on
+	- name (string): The user's username on the account manager.
+	- password (string): The user's password for the account manager.
