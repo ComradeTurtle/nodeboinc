@@ -6,12 +6,13 @@ const fs = require('fs');
 
 class RPC extends EventEmitter {
 
-    constructor(connectInfo = {hostname, port, password, debug}) {
+    constructor(connectInfo = {hostname, port, password, debug, options}) {
         super();
+        if (typeof options !== 'object') options = {};
 
         this.hostname = connectInfo.hostname || '127.0.0.1';
         this.port = connectInfo.port || 31416;
-        this.debug = connectInfo.debug || false;
+        this.debug = connectInfo.options.debug || false;
         
         this.socket = new net.Socket();
         this.socket.connect(this.port, this.hostname);
@@ -24,7 +25,8 @@ class RPC extends EventEmitter {
             console.debug(`Authenticating with ${this.hostname}...`);
 
             // open new file
-            this.stream = fs.createWriteStream('debug.log', {flags: 'w'});
+            const debugPath = connectInfo.options.debugPath || 'debug.log';
+            this.stream = fs.createWriteStream(debugPath, {flags: 'w'});
         }
 
         this.rawRequest('<auth1/>').then(async (a1) => {
@@ -35,7 +37,7 @@ class RPC extends EventEmitter {
                     if (this.debug) console.debug('Successfully authenticated');
                     this.authenticated = true;
                     // Get initial state
-                    await this.getState();
+                    if (connectInfo.options.getInitialState || true) await this.getState();
                     if (this.debug) console.debug(`Fetched initial state from client.`);
                     this.emit('ready');
                 } else {
@@ -73,7 +75,7 @@ class RPC extends EventEmitter {
                             const parsed1 = parser1.parse(response);
                             resolve(parsed1);
                         } else {
-                            reject('Invalid XML');
+                            reject({timestamp: Date.now(), message: 'Received invalid XML from server.'});
                             // this.socket.close();
                         }
                     }
@@ -85,9 +87,15 @@ class RPC extends EventEmitter {
     getState() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_state/>').then((state) => {
-                this.state = state.boinc_gui_rpc_reply.client_state;
-                resolve(this.state);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: { endpoint: 'getState' },
+                    timestamp: Date.now(),
+                    response: state.boinc_gui_rpc_reply.client_state
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.state = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, timestamp: Date.now(), request: {endpoint: 'getState'}, ...err}));
         })
     }
 
@@ -96,8 +104,14 @@ class RPC extends EventEmitter {
             let req = activeOnly ? '<get_results/>' : '<get_results><active_only>0</active_only></get_results>';
             this.rawRequest(req).then((wu) => {
                 if (!wu.boinc_gui_rpc_reply.results.result) {
-                    this.wu = [];
-                    resolve([]);
+                    const res = {
+                        success: true,
+                        request: {endpoint: 'getWU', activeOnly: activeOnly},
+                        timestamp: Date.now(),
+                        message: []
+                    }
+                    if (this.connectInfo.options.saveResponses) this.responses.wu = res;
+                    resolve({success: true, request: {endpoint: 'getWU', activeOnly: activeOnly}, ...res});
                     return;
                 }
                 wu.boinc_gui_rpc_reply.results.result.forEach((t) => {
@@ -124,9 +138,15 @@ class RPC extends EventEmitter {
                         }
                     }
                 })
-                this.wu = wu.boinc_gui_rpc_reply.results.result;
-                resolve(this.wu);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: {endpoint: 'getWU', options: {activeOnly: activeOnly}},
+                    timestamp: Date.now(),
+                    message: wu.boinc_gui_rpc_reply.results.result
+                };
+                this.responses.wu = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getWU', options: {activeOnly: activeOnly}}, ...err}));
         })
     }
 
@@ -148,8 +168,8 @@ class RPC extends EventEmitter {
             }
 
             this.rawRequest(req).then((res) => {
-                resolve(Object.hasOwn(res.boinc_gui_rpc_reply, 'success'));
-            }).catch(reject);
+                resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), timestamp: Date.now(), request: {endpoint: 'setWU', action: action, options: {project: project, name: name}}});
+            }).catch((err) => reject({success: false, request: {endpoint: 'setWU', action: action, options: {project: project, name: name}}, ...err}));
         })
     }
 
@@ -187,59 +207,93 @@ class RPC extends EventEmitter {
                 if (status.isNetworkSuspended) status.network_suspend_reason = stateLookup('suspend_reason', st.network_suspend_reason);
                 if (status.isGpuSuspended) status.gpu_suspend_reason = stateLookup('suspend_reason', st.gpu_suspend_reason);
 
-                this.status = status;
-                resolve(status);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: { endpoint: 'getMode' },
+                    timestamp: Date.now(),
+                    message: status
+                }
+                if (this.connectInfo.options.saveResponses) this.responses.mode = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getMode'}, ...err}));
         })
     }
 
     getStatistics() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_statistics/>').then((stat) => {
-                this.statistics = stat.boinc_gui_rpc_reply.statistics.project_statistics;
-                resolve(this.statistics);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: {endpoint: 'getStatistics'},
+                    timestamp: Date.now(),
+                    message: stat.boinc_gui_rpc_reply.statistics.project_statistics
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.statistics = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getStatistics'}, ...err}));
         })
     }
 
     getWUHistory() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_old_results/>').then((wu) => {
-                this.wuHistory = wu.boinc_gui_rpc_reply.old_results.old_result;
-                resolve(this.wuHistory);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: {endpoint: 'getWUHistory'},
+                    timestamp: Date.now(),
+                    message: wu.boinc_gui_rpc_reply.old_results.old_result
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.wuHistory = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getWUHistory'}, ...err}));
         })
     }
 
     getDiskUsage() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_disk_usage/>').then((disk) => {
-                this.diskUsage = disk.boinc_gui_rpc_reply.disk_usage_summary;
-                resolve(this.diskUsage);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: {endpoint: 'getDiskUsage'},
+                    timestamp: Date.now(),
+                    message: disk.boinc_gui_rpc_reply.disk_usage_summary
+                }
+                if (this.connectInfo.options.saveResponses) this.responses.diskUsage = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getDiskUsage'}, ...err}));
         })
     }
 
     getServerVersion() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<exchange_versions/>').then((version) => {
-                this.serverVersion = {
-                    major: parseInt(version.boinc_gui_rpc_reply.server_version.major),
-                    minor: parseInt(version.boinc_gui_rpc_reply.server_version.minor),
-                    release: parseInt(version.boinc_gui_rpc_reply.server_version.release),
-                    string: `${version.boinc_gui_rpc_reply.server_version.major}.${version.boinc_gui_rpc_reply.server_version.minor}.${version.boinc_gui_rpc_reply.server_version.release}`
-                }
-                resolve(this.serverVersion);
-            }).catch((err) => reject(err));
+                const res = {
+                    timestamp: Date.now(),
+                    message: {
+                        major: parseInt(version.boinc_gui_rpc_reply.server_version.major),
+                        minor: parseInt(version.boinc_gui_rpc_reply.server_version.minor),
+                        release: parseInt(version.boinc_gui_rpc_reply.server_version.release),
+                        string: `${version.boinc_gui_rpc_reply.server_version.major}.${version.boinc_gui_rpc_reply.server_version.minor}.${version.boinc_gui_rpc_reply.server_version.release}`
+                    }
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.serverVersion = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getServerVersion'}, ...err}));
         })
     }
 
     getMessageCount() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_message_count/>').then((count) => {
-                this.messageCount = parseInt(count.boinc_gui_rpc_reply.seqno);
-                resolve(this.messageCount);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    request: {endpoint: 'getMessageCount'},
+                    timestamp: Date.now(),
+                    message: parseInt(count.boinc_gui_rpc_reply.seqno)
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.messageCount = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getMessageCount'}, ...err}));
         })
     }
 
@@ -271,9 +325,15 @@ class RPC extends EventEmitter {
                     })
                 }
 
-                this.messages = arr;
-                resolve(this.messages);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    timestamp: Date.now(),
+                    request: {endpoint: 'getMessages', options: {seqno: seqno, translatable: translatable}},
+                    message: arr
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.messages = res;
+                resolve(res);
+            }).catch((err) => reject({success: true, request: {endpoint: 'getMessages', options: {seqno: seqno, translatable: translatable}}, ...err}));
         })
     }
 
@@ -284,25 +344,37 @@ class RPC extends EventEmitter {
                     this.rawRequest('<get_all_projects_list/>').then((project) => {
                         let arr = []
                         project.boinc_gui_rpc_reply.projects.project.forEach((e) => {
-                            // Strip description of CDATA tags
+                            //* Strip description of CDATA tags
                             if (e.description) e.description.replaceAll(`<!CDATA[`, '').replaceAll(`]]>`, '');
 
                             e.platforms = e.platforms.name;
 
                             arr.push(e);
                         })
-
-                        this.projectList = arr;
-                        resolve(this.projectList);
-                    }).catch((err) => reject(err));
+                        const res = {
+                            success: true,
+                            timestamp: Date.now(),
+                            request: {endpoint: 'getProject', action: 'list'},
+                            message: arr
+                        };
+                        if (this.connectInfo.options.saveResponses) this.responses.project.list = res;
+                        resolve(res);
+                    }).catch((err) => reject({success: false, request: {endpoint: 'getProject', action: 'list'}, ...err}));
                     break;
                 case 'attached':
                     this.rawRequest('<get_project_status/>').then((res) => {
-                        resolve(res.boinc_gui_rpc_reply.projects.project);
-                    }).catch(reject);
+                        const r = {
+                            success: true,
+                            timestamp: Date.now(),
+                            request: {endpoint: 'getProject', action: 'attached'},
+                            message: res.boinc_gui_rpc_reply.projects.project
+                        }
+                        if (this.connectInfo.options.saveResponses) this.responses.project.attached = r;
+                        resolve(r);
+                    }).catch((err) => reject({success: false, request: {endpoint: 'getProject', action: 'attached'}, ...err}));
                     break;
                 default:
-                    reject('Invalid action. Valid actions: list, attached');
+                    reject({success: false, timestamp: Date.now(), request: {endpoint: 'getProject', action: 'attached'}, message: 'Invalid action. Valid actions: list, attached'});
             }
         })
     }
@@ -320,54 +392,66 @@ class RPC extends EventEmitter {
                         downloadFriendly: formatBytes(parseFloat(e.down))
                     })
                 })
-                this.xfers = arr;
-                resolve(arr);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    timestamp: Date.now(),
+                    request: { endpoint: 'getDailyTransfers' },
+                    message: arr
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.dailyTransfers = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getDailyTransfers'}, ...err}));
         })
     }
 
     getNotices(onlyPublic = false) {
         return new Promise((resolve, reject) => {
-            if (!onlyPublic && !this.authenticated) reject(`Unauthenticated!`);
+            if (!onlyPublic && !this.authenticated) reject({success: false, timestamp: Date.now(), request: {endpoint: 'getNotices', options: {onlyPublic: onlyPublic}}, message: 'Unauthenticated'});
 
             let request = '<get_notices';
             if (onlyPublic) request += '_public';
             this.rawRequest(`${request}/>`).then((notices) => {
-                this.notices = notices.boinc_gui_rpc_reply.notices.notice;
-                resolve(this.notices);
-            }).catch((err) => reject(err));
+                const res = {
+                    success: true,
+                    timestamp: Date.now(),
+                    request: {endpoint: 'getNotices', options: {onlyPublic: onlyPublic}},
+                    message: notices.boinc_gui_rpc_reply.notices.notice
+                };
+                if (this.connectInfo.options.saveResponses) this.responses.notices = res;
+                resolve(res);
+            }).catch((err) => reject({success: false, request: {endpoint: 'getNotices', options: {onlyPublic: onlyPublic}}, ...err}));
         })
     }
 
     retryNetworkOps() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<network_available/>').then((res) => {
-                resolve(Object.hasOwn(res.boinc_gui_rpc_reply, 'success'));
-            }).catch((err) => reject(err));
+                resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'retryNetworkOps'}, timestamp: Date.now()});
+            }).catch((err) => reject({success: false, request: {endpoint: 'retryNetworkOps'}, ...err}));
         })
     }
 
     retryTransfer(projectUrl, filename) {
         return new Promise((resolve, reject) => {
             this.rawRequest(`<retry_file_transfer><project_url>${projectUrl}</project_url><filename>${filename}</filename></retry_file_transfer>`).then((res) => {
-              resolve(Object.hasOwn(res.boinc_gui_rpc_reply, 'success'))
-            }).catch((err) => reject(err));
+              resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'retryTransfer', options: {projectUrl: projectUrl, filename: filename}}, timestamp: Date.now()});
+            }).catch((err) => reject({success: false, request: {endpoint: 'retryTransfer', options: {projectUrl: projectUrl, filename: filename}}, ...err}));
         })
     }
 
     abortTransfer(projectUrl, filename) {
         return new Promise((resolve, reject) => {
             this.rawRequest(`<abort_file_transfer><project_url>${projectUrl}</project_url><filename>${filename}</filename></abort_file_transfer>`).then((res) => {
-                resolve(Object.hasOwn(res.boinc_gui_rpc_reply, 'success'));
-            }).catch((err) => reject(err));
+                resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'abortTransfer', options: {projectUrl: projectUrl, filename: filename}}, timestamp: Date.now()});
+            }).catch((err) => reject({success: false, request: {endpoint: 'abortTransfer', options: {projectUrl: projectUrl, filename: filename}}, ...err}));
         })
     }
 
     runBenchmark() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<run_benchmarks/>').then((res) => {
-                resolve(Object.hasOwn(res.boinc_gui_rpc_reply, 'success'));
-            }).catch((err) => reject(err));
+                resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'runBenchmark'}, timestamp: Date.now()});
+            }).catch((err) => reject({success: false, request: {endpoint: 'runBenchmark'}, ...err}));
         })
     }
 
@@ -381,8 +465,8 @@ class RPC extends EventEmitter {
                         else req += `<duration></duration>`;
 
                         this.rawRequest(`<set_network_mode>${req}</set_network_mode>`).then((res) => {
-                            resolve({type: 'network', result: Object.hasOwn(res.boinc_gui_rpc_reply, 'success')});
-                        }).catch((err) => reject(err));
+                            resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, timestamp: Date.now()});
+                        }).catch((err) => reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, ...err}));
                     }
                     else reject('Invalid target.');
                     break;
@@ -393,8 +477,8 @@ class RPC extends EventEmitter {
                         else req += `<duration></duration>`;
 
                         this.rawRequest(`<set_run_mode>${req}</set_run_mode>`).then((res) => {
-                            resolve({type: 'run', result: Object.hasOwn(res.boinc_gui_rpc_reply, 'success')});
-                        }).catch((err) => reject(err));
+                            resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, timestamp: Date.now()});
+                        }).catch((err) => reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, ...err}));
                     }
                     else reject('Invalid target.');
                     break;
@@ -405,38 +489,27 @@ class RPC extends EventEmitter {
                         else req += `<duration></duration>`;
 
                         this.rawRequest(`<set_gpu_mode>${req}</set_gpu_mode>`).then((res) => {
-                            resolve({type: 'gpu', result: Object.hasOwn(res.boinc_gui_rpc_reply, 'success')});
-                        }).catch((err) => reject(err));
+                            resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, timestamp: Date.now()});
+                        }).catch((err) => reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, ...err}));
                     }
                     else reject('Invalid target.');
                     break;
                 case 'all':
-                    let reqs = ["network", "run", "gpu"].map((m) => {
-                        return new Promise((r1, r2) => {
-                            if (['always', 'auto', 'never', 'restore'].includes(target)) {
-                                let req = `<${target}/>`;
-                                if (duration && parseInt(duration)) req += `<duration>${duration}</duration>`;
-                                else req += `<duration></duration>`;
+                    for (i of ["network", "run", "gpu"]) {
+                        if (['always', 'auto', 'never', 'restore'].includes(target)) {
+                            let req = `<${target}/>`;
+                            if (duration && parseInt(duration)) req += `<duration>${duration}</duration>`;
+                            else req += `<duration></duration>`;
 
-                                this.rawRequest(`<set_${m}_mode>${req}</set_${m}_mode>`).then((res) => {
-                                    r1({type: m, result: Object.hasOwn(res.boinc_gui_rpc_reply[0], 'success')});
-                                }).catch((err) => reject(err));
-                            }
-                            else r2('Invalid target.');
-                        })
-                    })
-                    let res = [];
-
-                    for (let req of reqs) {
-                        await req.then((r) => {
-                            res.push(r);
-                        })
+                            this.rawRequest(`<set_${m}_mode>${req}</set_${m}_mode>`).catch((err) => {
+                                reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, ...err}); 
+                            });
+                        }
+                        else reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, timestamp: Date.now(), message: 'Invalid target'});
                     }
-                    if (this.debug) console.debug(res);
-                    resolve(res);
                     break;
                 default:
-                    reject('Invalid type.');
+                    reject({success: false, request: {endpoint: 'setMode', options: {type: type, target: target, duration: duration}}, timestamp: Date.now(), message: 'Invalid type'});
             }
         })
     }
@@ -446,31 +519,18 @@ class RPC extends EventEmitter {
             let req;
             switch (action) {
                 case 'reset':
-                    req = `<project_reset><project_url>${options.url}</project_url></project_reset>`;
-                    break;
                 case 'detach':
-                    req = `<project_detach><project_url>${options.url}</project_url></project_detach>`;
-                    break;
                 case 'update':
-                    req = `<project_update><project_url>${options.url}</project_url></project_update>`;
-                    break;
                 case 'suspend':
-                    req = `<project_suspend><project_url>${options.url}</project_url></project_suspend>`;
-                    break;
                 case 'resume':
-                    req = `<project_resume><project_url>${options.url}</project_url></project_resume>`;
-                    break;
                 case 'nomorework':
-                    req = `<project_nomorework><project_url>${options.url}</project_url></project_nomorework>`;
-                    break;
                 case 'allowmorework':
-                    req = `<project_allowmorework><project_url>${options.url}</project_url></project_allowmorework>`;
-                    break;
                 case 'detach_when_done':
-                    req = `<project_detach_when_done><project_url>${options.url}</project_url></project_detach_when_done>`;
-                    break;
-                case 'dont_detach_when_done':
-                    req = `<project_dont_detach_when_done><project_url>${options.url}</project_url></project_dont_detach_when_done>`;
+                case 'dont_detach_when_done':               
+                    req = `<project_${action}><project_url>${options.url}</project_url></project_${action}>`;
+                    this.rawRequest(req).then((res) => {
+                        resolve({success: Object.hasOwn(res.boinc_gui_rpc_reply, 'success'), request: {endpoint: 'setProject', options: {action: action, ...options}}, timestamp: Date.now()});
+                    }).catch((err) => reject({success: false, request: {endpoint: 'setProject', options: {action: action, ...options}}, ...err}));
                     break;
                 case 'attach':
                     //? Get seqno from latest client message. We need to compare this
@@ -480,7 +540,7 @@ class RPC extends EventEmitter {
 
                     //? Attach main request
                     this.rawRequest(`<project_attach><project_url>${options.url}</project_url><authenticator>${options.authenticator}</authenticator>${options.project_name ? `<project_name>${options.project_name}</project_name>` : `<project_name>${options.url}</project_name>`}</project_attach>`).then(async (res) => {
-                        // if (this.debug) console.debug(`[ATTACH MAIN] ${JSON.stringify(res)}`);
+                        if (this.debug) console.debug(`[ATTACH MAIN] ${JSON.stringify(res)}`);
 
                         //? Get existing project list so that we effectively filter out any
                         //? other currently running projects
@@ -489,7 +549,6 @@ class RPC extends EventEmitter {
 
                         //* Request is async - on success, poll for completion
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
-
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<project_attach_poll/>').then(async (pres) => {
                                     if (this.debug) console.debug(`[ATTACH POLL] ${JSON.stringify(pres)}`);
@@ -519,16 +578,22 @@ class RPC extends EventEmitter {
                                                     clearInterval(pollInterval);
 
                                                     result.complete = true;
+                                                    result.msg = 'Scheduler request completed';
                                                 }
                                             }
 
                                             if (result.complete) {
                                                 if (result.error) reject({
                                                     success: false,
+                                                    timestamp: Date.now(),
+                                                    request: { endpoint: 'setProject', options: {action: action, ...options}},
                                                     message: result.msg
                                                 })
                                                 else resolve({
-                                                    success: true
+                                                    success: true,
+                                                    timestamp: Date.now(),
+                                                    request: { endpoint: 'setProject', options: {action: action, ...options}},
+                                                    message: result.msg
                                                 })
                                             }
                                         }
@@ -537,15 +602,18 @@ class RPC extends EventEmitter {
                                         reject({
                                             success: false,
                                             message: pres.boinc_gui_rpc_reply.project_attach_reply.message,
-                                            error_num: parseInt(pres.boinc_gui_rpc_reply.project_attach_reply.error_num)
+                                            request: { endpoint: 'setProject', options: {action: action, ...options}},
+                                            ...(this.connectInfo.options.resolveErrorNumbers && {error_num: parseInt(pres.boinc_gui_rpc_reply.project_attach_reply.error_num)})
                                         })
                                     }
                                 })
-                            }, 500);
+                            }, parseInt(this.connectInfo.options.pollInterval));
                         } else {
                             if (this.debug) console.debug(`[ATTACH REJECT] ${res.boinc_gui_rpc_reply}`);
                             reject({
                                 success: false,
+                                timestamp: Date.now(),
+                                request: { endpoint: 'setProject', options: {action: action, ...options}},
                                 message: res.boinc_gui_rpc_reply.error
                             })
                         }
@@ -553,10 +621,20 @@ class RPC extends EventEmitter {
 
                     break;
                 case 'create_account':
-                    reject("Not yet implemented");
+                    reject({
+                        success: false,
+                        timestamp: Date.now(),
+                        request: { endpoint: 'setProject', options: {action: action, ...options}},
+                        message: 'Not yet implemented'
+                    });
                     break;
                 default:
-                    reject('Invalid action. Valid actions: reset, detach, attach, update, suspend, resume, nomorework, allowmorework, detach_when_done, dont_detach_when_done');
+                    reject({
+                        success: false,
+                        timestamp: Date.now(),
+                        request: { endpoint: 'setProject', options: {action: action, ...options}},
+                        message: 'Invalid action. Valid actions: reset, detach, attach, update, suspend, resume, nomorework, allowmorework, detach_when_done, dont_detach_when_done'
+                    });
             }
         })
     }
@@ -566,15 +644,21 @@ class RPC extends EventEmitter {
             this.rawRequest(`<acct_mgr_info/>`).then((res) => {
                 if (this.debug) console.debug(`[ACCT_MGR_INFO] ${JSON.stringify(res)}`);
                 if (Object.hasOwn(res.boinc_gui_rpc_reply, 'acct_mgr_info')) {
-                    this.accountManager = res.boinc_gui_rpc_reply.acct_mgr_info;
+                    const res = {
+                        success: true,
+                        request: { endpoint: 'getAccountManager' },
+                        timestamp: Date.now(),
+                        message: res.boinc_gui_rpc_reply.acct_mgr_info
+                    };
 
                     ['have_credentials', 'cookie_required'].forEach((e) => {
-                        if (Object.hasOwn(this.accountManager, e)) this.accountManager[e] = true;
-                        else this.accountManager[e] = false;
+                        if (Object.hasOwn(this.accountManager, e)) res[e] = true;
+                        else res[e] = false;
                     });
 
-                    resolve(this.accountManager);
-                } else reject(res.boinc_gui_rpc_reply.error);
+                    if (this.connectInfo.options.saveResponses) this.responses.accountManager = res;
+                    resolve(res);
+                } else reject({success: false, request: { endpoint: 'getAccountManager' }, timestamp: Date.now(), message: res.boinc_gui_rpc_reply.error});
             })
         })
     }
@@ -623,7 +707,7 @@ class RPC extends EventEmitter {
                                         }
                                     }
                                 });
-                            }, 500);
+                            }, parseInt(this.connectInfo.options.pollInterval) || 500);
                         } else {
                             reject({success: false, message: res.boinc_gui_rpc_reply.error});
                         }
@@ -648,7 +732,9 @@ class RPC extends EventEmitter {
                                                 if (acctMgr.acct_mgr_url === '' && !acctMgr.have_credentials) {
                                                     clearInterval(pollInterval);
                                                     resolve({
-                                                        success: true
+                                                        ...acctMgr,
+                                                        request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
+                                                        timestamp: Date.now()
                                                     })
                                                 } else {
                                                     //! If error_num is 0 but the account manager is not detached, something went wrong. Return error message
@@ -656,17 +742,20 @@ class RPC extends EventEmitter {
                                                     clearInterval(pollInterval);
                                                     reject({
                                                         success: false,
+                                                        timestamp: Date.now(),
+                                                        request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
                                                         message: pres.boinc_gui_rpc_reply.acct_mgr_rpc_reply.message,
                                                         error_num: parseInt(pres.boinc_gui_rpc_reply.acct_mgr_rpc_reply.error_num)
-                                                    })
+                                                        (this.connectInfo.options.resolveErrorNumbers && { error_desc: stateLookup('freturn', parseInt(pres.boinc_gui_rpc_reply.acct_mgr_rpc_reply.error_num))})
+                                                    });
                                                 }
                                             })
                                         }
                                     }
                                 });
-                            }, 500);
+                            }, parseInt(this.connectInfo.options.pollInterval) || 500);
                         } else {
-                            reject({success: false, message: res.boinc_gui_rpc_reply.error});
+                            reject({success: false, timestamp: Date.now(), request: { endpoint: 'setAccountManager', options: { action: action, ...options }}, message: res.boinc_gui_rpc_reply.error});
                         }
                     })
                     break;
@@ -677,16 +766,34 @@ class RPC extends EventEmitter {
     getProxySettings() {
         return new Promise((resolve, reject) => {
             this.rawRequest('<get_proxy_settings/>').then((res) => {
-                // console.log(res);
+                let r;
                 if (Object.keys(res.boinc_gui_rpc_reply.proxy_info).includes('no_proxy')) {
-                    resolve({
-                        no_proxy: true,
-                        no_autodetect: Object.keys(res.boinc_gui_rpc_reply.proxy_info).includes('no_autodetect')
-                    })
+                    r = {
+                        success: true,
+                        timestamp: Date.now(),
+                        request: { endpoint: 'getProxySettings' },
+                        message: {
+                            no_proxy: true,
+                            no_autodetect: Object.keys(res.boinc_gui_rpc_reply.proxy_info).includes('no_autodetect')
+                        }
+                    }
+                    if (this.connectInfo.options.saveResponses) this.responses.proxy = r;
                 } else {
-                    resolve(res.boinc_gui_rpc_reply.proxy_info);
+                    r = {
+                        success: true,
+                        timestamp: Date.now(),
+                        request: { endpoint: 'getProxySettings' },
+                        message: res.boinc_gui_rpc_reply.proxy_info
+                    };
+                    if (this.connectInfo.options.saveResponses) this.responses.proxy = r;
                 }
-            }).catch((err) => reject(err));
+                resolve(r);
+            }).catch((err) => reject({
+                success: false,
+                timestamp: Date.now(),
+                request: { endpoint: 'getProxySettings' },
+                message: err
+            }));
         })
     }
 }
