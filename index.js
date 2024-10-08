@@ -8,7 +8,7 @@ class RPC extends EventEmitter {
 
     constructor(connectInfo = {hostname, port, password, debug, options}) {
         super();
-        if (typeof options !== 'object') options = {};
+        if (typeof connectInfo.options !== 'object') connectInfo.options = {};
 
         this.hostname = connectInfo.hostname || '127.0.0.1';
         this.port = connectInfo.port || 31416;
@@ -20,6 +20,12 @@ class RPC extends EventEmitter {
         this.connected = false;
         this.authenticated = false;
         if (!connectInfo.password) throw new Error('No password provided');
+
+        this.connectInfo = {
+            options: {
+                ...connectInfo.options
+            }
+        }
 
         if (this.debug) {
             console.debug(`Authenticating with ${this.hostname}...`);
@@ -37,14 +43,14 @@ class RPC extends EventEmitter {
                     if (this.debug) console.debug('Successfully authenticated');
                     this.authenticated = true;
                     // Get initial state
-                    if (connectInfo.options.getInitialState || true) await this.getState();
+                    if (connectInfo.options.getInitialState || true) await this.getState().catch((err) => console.error(err));
                     if (this.debug) console.debug(`Fetched initial state from client.`);
                     this.emit('ready');
                 } else {
                     throw new Error('Authentication failure');
                 }
             })
-        })
+        }).catch((err) => console.error(err));
     }
 
     rawRequest(request) {
@@ -95,7 +101,7 @@ class RPC extends EventEmitter {
                 };
                 if (this.connectInfo.options.saveResponses) this.responses.state = res;
                 resolve(res);
-            }).catch((err) => reject({success: false, timestamp: Date.now(), request: {endpoint: 'getState'}, ...err}));
+            }).catch((err) => reject({success: false, timestamp: Date.now(), request: {endpoint: 'getState'}, message: err}));
         })
     }
 
@@ -146,7 +152,7 @@ class RPC extends EventEmitter {
                 };
                 this.responses.wu = res;
                 resolve(res);
-            }).catch((err) => reject({success: false, request: {endpoint: 'getWU', options: {activeOnly: activeOnly}}, ...err}));
+            }).catch((err) => reject({success: false, request: {endpoint: 'getWU', options: {activeOnly: activeOnly}}, message: err}));
         })
     }
 
@@ -549,6 +555,8 @@ class RPC extends EventEmitter {
 
                         //* Request is async - on success, poll for completion
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
+                            if (!this.connectInfo.options.enablePolling) return resolve({success: true, request: {endpoint: 'setProject', options: {action: action, ...options}}, timestamp: Date.now()});
+
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<project_attach_poll/>').then(async (pres) => {
                                     if (this.debug) console.debug(`[ATTACH POLL] ${JSON.stringify(pres)}`);
@@ -607,7 +615,7 @@ class RPC extends EventEmitter {
                                         })
                                     }
                                 })
-                            }, parseInt(this.connectInfo.options.pollInterval));
+                            }, parseInt(this.connectInfo.options.pollInterval) || 500);
                         } else {
                             if (this.debug) console.debug(`[ATTACH REJECT] ${res.boinc_gui_rpc_reply}`);
                             reject({
@@ -672,7 +680,12 @@ class RPC extends EventEmitter {
                         
                         //* Request is async - on success, poll for completion
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
-                            
+                            if (!this.connectInfo.options.enablePolling) return resolve({
+                                success: true,
+                                request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
+                                timestamp: Date.now()
+                            })
+
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<acct_mgr_rpc_poll/>').then(async (pres) => {
                                     if (this.debug) console.debug(`[ACCT_MGR_POLL] ${JSON.stringify(pres)}`);
@@ -716,6 +729,12 @@ class RPC extends EventEmitter {
                 case 'detach':
                     this.rawRequest(`<acct_mgr_rpc><url></url><name></name><password></password></acct_mgr_rpc>`).then((res) => {
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
+                            if (!this.connectInfo.options.enablePolling) return resolve({
+                                success: true,
+                                request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
+                                timestamp: Date.now()
+                            })
+                            
                             //* Request is async - on success, poll for completion
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<acct_mgr_rpc_poll/>').then(async (pres) => {
