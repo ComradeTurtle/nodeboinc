@@ -555,6 +555,8 @@ class RPC extends EventEmitter {
 
                         //* Request is async - on success, poll for completion
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
+                            if (!this.connectInfo.options.enablePolling) return resolve({success: true, request: {endpoint: 'setProject', options: {action: action, ...options}}, timestamp: Date.now()});
+
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<project_attach_poll/>').then(async (pres) => {
                                     if (this.debug) console.debug(`[ATTACH POLL] ${JSON.stringify(pres)}`);
@@ -613,7 +615,7 @@ class RPC extends EventEmitter {
                                         })
                                     }
                                 })
-                            }, parseInt(this.connectInfo.options.pollInterval));
+                            }, parseInt(this.connectInfo.options.pollInterval) || 500);
                         } else {
                             if (this.debug) console.debug(`[ATTACH REJECT] ${res.boinc_gui_rpc_reply}`);
                             reject({
@@ -678,7 +680,12 @@ class RPC extends EventEmitter {
                         
                         //* Request is async - on success, poll for completion
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
-                            
+                            if (!this.connectInfo.options.enablePolling) return resolve({
+                                success: true,
+                                request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
+                                timestamp: Date.now()
+                            })
+
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<acct_mgr_rpc_poll/>').then(async (pres) => {
                                     if (this.debug) console.debug(`[ACCT_MGR_POLL] ${JSON.stringify(pres)}`);
@@ -722,6 +729,12 @@ class RPC extends EventEmitter {
                 case 'detach':
                     this.rawRequest(`<acct_mgr_rpc><url></url><name></name><password></password></acct_mgr_rpc>`).then((res) => {
                         if (Object.hasOwn(res.boinc_gui_rpc_reply, 'success')) {
+                            if (!this.connectInfo.options.enablePolling) return resolve({
+                                success: true,
+                                request: { endpoint: 'setAccountManager', options: { action: action, ...options }},
+                                timestamp: Date.now()
+                            })
+                            
                             //* Request is async - on success, poll for completion
                             let pollInterval = setInterval(async () => {
                                 this.rawRequest('<acct_mgr_rpc_poll/>').then(async (pres) => {
