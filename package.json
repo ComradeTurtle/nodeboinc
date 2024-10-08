@@ -2,7 +2,7 @@
   "name": "boincgui",
   "version": "0.1.0",
   "main": "index.js",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "dependencies": {
     "fast-xml-parser": "^4.5.0"
   }
