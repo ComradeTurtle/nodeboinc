@@ -9,13 +9,6 @@ fast-xml-parser@^4.5.0:
   dependencies:
     strnum "^1.0.5"
 
-"nodeboinc@file:":
-  version "0.1.0"
-  resolved "file:"
-  dependencies:
-    fast-xml-parser "^4.5.0"
-    nodeboinc "file:"
-
 strnum@^1.0.5:
   version "1.0.5"
   resolved "https://registry.npmjs.org/strnum/-/strnum-1.0.5.tgz"

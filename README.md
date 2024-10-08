@@ -1,5 +1,5 @@
 # nodeboinc
-***WARNING: This code is still in early WIP, but most components are already working. It has NOT been thoroughly tested yet has not been published to npm.***
+***WARNING: This code is still in early WIP, but most components are already working. It has NOT been thoroughly tested yet.***
 
 A simple Node.js module that interfaces with local and remote BOINC Client instances.
 
